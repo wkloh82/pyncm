@@ -28,6 +28,18 @@ from dataclasses import dataclass
 
 from logging import exception, getLogger, basicConfig
 import sys, argparse, re, os
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QLabel, QLineEdit, QPushButton, QTextEdit, QProgressBar,
+    QGroupBox, QFormLayout, QComboBox, QTableWidget, QMessageBox,
+    QFileDialog, QTableWidgetItem, QDialog
+)
+from PyQt6.QtCore import QThread, pyqtSignal, Qt, QUrl
+from PyQt6.QtGui import QIcon, QAction
+from PyQt6.QtWebEngineWidgets import QWebEngineView
+from PyQt6.QtWebEngineCore import QWebEngineProfile
+import json
+from pathlib import Path
 
 logger = getLogger("pyncm.main")
 # Import checks
@@ -532,40 +544,41 @@ def create_subroutine(sub_type) -> Subroutine:
 
 
 def parse_sharelink(url):
-    """Parses (partial) URLs for NE resources and determines its ID and type
-
-    e.g.
-        31140560 (plain song id)
-        https://mos9527.github.io/pyncmd/?trackId=1818064296 (pyncmd)
-        分享Ali Edwards的单曲《Devil Trigger》: http://music.163.com/song/1353163404/?userid=6483697162 (来自@网易云音乐) (mobile app)
-        "分享mos9527创建的歌单「東方 PC」: http://music.163.com/playlist?id=72897851187" (desktop app)
-        https://music.163.com/#/user/home?id=315542615 (user homepage)
-    """
-    rurl = re.findall(r"(?:http|https):\/\/.*", url)
-    if rurl:
-        url = rurl[0]  # Use first URL found. Otherwise use value given as is.
-    numerics = re.findall(r"\d{4,}", url)
-    assert numerics != None, "未在链接中找到任何 ID"
-    ids = numerics[:1]  # Only pick the first match
-    table = {
-        "song": ["trackId", "song"],
-        "playlist": ["playlist"],
-        "artist": ["artist"],
-        "album": ["album"],
-        "user": ["user"],
-    }
-    rtype = "song"  # Defaults to songs (tracks)
-    best_index = len(url)
-    for rtype_, rkeyword in table.items():
-        for kw in rkeyword:
-            try:
-                index = url.index(kw)
-                if index < best_index:
-                    best_index = index
-                    rtype = rtype_
-            except ValueError:
-                continue
-    return rtype, ids
+    """Parses (partial) URLs for NE resources and determines its ID and type"""
+    try:
+        rurl = re.findall(r"(?:http|https):\/\/.*", url)
+        if rurl:
+            url = rurl[0]  # Use first URL found. Otherwise use value given as is.
+        numerics = re.findall(r"\d{4,}", url)
+        if not numerics:
+            raise ValueError("未在链接中找到任何 ID")
+            
+        ids = numerics[:1]  # Only pick the first match
+        table = {
+            "song": ["trackId", "song"],
+            "playlist": ["playlist"],
+            "artist": ["artist"],
+            "album": ["album"],
+            "user": ["user"],
+        }
+        rtype = "song"  # Defaults to songs (tracks)
+        best_index = len(url)
+        
+        for rtype_, rkeyword in table.items():
+            for kw in rkeyword:
+                try:
+                    index = url.index(kw)
+                    if index < best_index:
+                        best_index = index
+                        rtype = rtype_
+                except ValueError:
+                    continue
+                    
+        return rtype, ids
+        
+    except Exception as e:
+        logger.exception(f"解析链接失败: {url}")
+        raise ValueError(f"解析链接失败: {str(e)}")
 
 
 PLACEHOLDER_URL = "00000"
@@ -620,7 +633,7 @@ def parse_args(quit_on_empty_args=True):
         help=r"""音频音质（高音质需要 CVIP）
     参数：
         hires  - Hi-Res
-        lossless- “无损”
+        lossless- "无损"
         exhigh  - 较高
         standard- 标准""",
         default="standard",
@@ -912,6 +925,643 @@ def __main__(return_tasks=False):
     return
 
 
+class PyNCMGUI(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("网易云音乐下载器")
+        self.setMinimumSize(1200, 700)  # 减小窗口默认尺寸
+        self.setWindowIcon(QIcon("icon.ico"))
+        
+        # 配置文件路径
+        self.config_file = Path.home() / '.pyncm' / 'config.json'
+        self.config_file.parent.mkdir(exist_ok=True)
+        
+        # 加载配置
+        self.load_config()
+        
+        # 创建主窗口部件
+        main_widget = QWidget()
+        self.setCentralWidget(main_widget)
+        
+        # 创建水平布局作为主布局
+        main_layout = QHBoxLayout(main_widget)
+        main_layout.setSpacing(10)  # 减小间距
+        main_layout.setContentsMargins(10, 10, 10, 10)  # 减小边距
+        
+        # 创建左侧控制面板
+        left_layout = QVBoxLayout()
+        self.create_login_section(left_layout)
+        self.create_url_section(left_layout)
+        self.create_options_section(left_layout)
+        self.create_progress_section(left_layout)
+        main_layout.addLayout(left_layout, 1)  # 设置拉伸因子为1
+        
+        # 创建右侧下载列表区域
+        right_layout = QVBoxLayout()
+        self.create_download_list_section(right_layout)
+        main_layout.addLayout(right_layout, 2)  # 设置拉伸因子为2
+        
+        # 初始化下载管理器
+        self.download_manager = None
+        
+        # 创建菜单栏
+        self.create_menu_bar()
+        
+        # 创建状态栏
+        self.statusBar().showMessage("就绪")
+
+    def load_config(self):
+        """加载配置文件"""
+        try:
+            if self.config_file.exists():
+                with open(self.config_file, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                    self.last_output_dir = config.get('last_output_dir', '.')
+                    # 加载登录信息
+                    self.login_info = {
+                        'type': config.get('login_type', 'anonymous'),
+                        'phone': config.get('phone', ''),
+                        'cookie': config.get('cookie', ''),
+                        'last_login': config.get('last_login', '')
+                    }
+            else:
+                self.last_output_dir = '.'
+                self.login_info = {
+                    'type': 'anonymous',
+                    'phone': '',
+                    'cookie': '',
+                    'last_login': ''
+                }
+        except Exception as e:
+            logger.warning(f"加载配置文件失败: {e}")
+            self.last_output_dir = '.'
+            self.login_info = {
+                'type': 'anonymous',
+                'phone': '',
+                'cookie': '',
+                'last_login': ''
+            }
+
+    def save_config(self):
+        """保存配置文件"""
+        try:
+            config = {
+                'last_output_dir': self.output_dir.text(),
+                'login_type': self.login_info['type'],
+                'phone': self.login_info['phone'],
+                'cookie': self.login_info['cookie'],
+                'last_login': self.login_info['last_login']
+            }
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                json.dump(config, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.warning(f"保存配置文件失败: {e}")
+
+    def create_login_section(self, parent_layout):
+        login_group = QGroupBox("登录 (可选)")
+        login_layout = QVBoxLayout()
+        
+        # 添加登录方式选择
+        login_type_layout = QHBoxLayout()
+        self.login_type_label = QLabel("登录方式:")
+        self.login_type_combo = QComboBox()
+        self.login_type_combo.addItems(["匿名登录", "手机号登录", "Cookie登录", "扫码登录"])
+        self.login_type_combo.currentIndexChanged.connect(self.on_login_type_changed)
+        login_type_layout.addWidget(self.login_type_label)
+        login_type_layout.addWidget(self.login_type_combo)
+        login_layout.addLayout(login_type_layout)
+        
+        # 手机号登录部分
+        self.phone_login_widget = QWidget()
+        phone_layout = QHBoxLayout()
+        self.phone_input = QLineEdit()
+        self.phone_input.setPlaceholderText("手机号")
+        self.pwd_input = QLineEdit()
+        self.pwd_input.setPlaceholderText("密码")
+        self.pwd_input.setEchoMode(QLineEdit.EchoMode.Password)
+        phone_layout.addWidget(QLabel("手机号:"))
+        phone_layout.addWidget(self.phone_input)
+        phone_layout.addWidget(QLabel("密码:"))
+        phone_layout.addWidget(self.pwd_input)
+        self.phone_login_widget.setLayout(phone_layout)
+        
+        # Cookie登录部分
+        self.cookie_login_widget = QWidget()
+        cookie_layout = QHBoxLayout()
+        self.cookie_input = QLineEdit()
+        self.cookie_input.setPlaceholderText("MUSIC_U Cookie")
+        cookie_layout.addWidget(QLabel("Cookie:"))
+        cookie_layout.addWidget(self.cookie_input)
+        self.cookie_login_widget.setLayout(cookie_layout)
+        
+        # 登录按钮
+        login_btn = QPushButton("登录")
+        login_btn.clicked.connect(self.handle_login)
+        
+        # 添加登录信息显示
+        self.login_info_label = QLabel("未登录")
+        self.login_info_label.setStyleSheet("color: #666; font-size: 12px;")
+        self.login_info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        # 添加所有组件到主布局
+        login_layout.addWidget(self.phone_login_widget)
+        login_layout.addWidget(self.cookie_login_widget)
+        login_layout.addWidget(login_btn)
+        login_layout.addWidget(self.login_info_label)
+        
+        # 初始显示状态
+        self.phone_login_widget.hide()
+        self.cookie_login_widget.hide()
+        
+        login_group.setLayout(login_layout)
+        parent_layout.addWidget(login_group)
+        
+        # 尝试自动登录
+        self.auto_login()
+
+    def on_login_type_changed(self, index):
+        # 隐藏所有登录方式
+        self.phone_login_widget.hide()
+        self.cookie_login_widget.hide()
+        
+        # 显示选中的登录方式
+        if index == 1:  # 手机号登录
+            self.phone_login_widget.show()
+        elif index == 2:  # Cookie登录
+            self.cookie_login_widget.show()
+        elif index == 3:  # 扫码登录
+            self.show_qr_login()
+
+    def show_qr_login(self):
+        """显示扫码登录窗口"""
+        qr_window = QRLoginWindow(self)
+        if qr_window.exec() == QDialog.DialogCode.Accepted and qr_window.music_u_cookie:
+            try:
+                # 使用获取到的cookie进行登录
+                login.LoginViaCookie(qr_window.music_u_cookie)
+                self.login_info = {
+                    'type': 'cookie',
+                    'phone': '',
+                    'cookie': qr_window.music_u_cookie,
+                    'last_login': ''
+                }
+                # 保存登录信息
+                self.save_config()
+                # 更新登录状态
+                self.update_login_status()
+            except Exception as e:
+                QMessageBox.critical(self, "登录失败", str(e))
+
+    def auto_login(self):
+        """尝试自动登录"""
+        try:
+            if self.login_info['type'] == 'phone' and self.login_info['phone']:
+                login.LoginViaCellphone(self.login_info['phone'], self.login_info['cookie'])
+                self.update_login_status()
+            elif self.login_info['type'] == 'cookie' and self.login_info['cookie']:
+                login.LoginViaCookie(self.login_info['cookie'])
+                self.update_login_status()
+            else:
+                login.LoginViaAnonymousAccount()
+                self.update_login_status()
+        except Exception as e:
+            logger.warning(f"自动登录失败: {e}")
+            # 如果自动登录失败，尝试匿名登录
+            try:
+                login.LoginViaAnonymousAccount()
+                self.update_login_status()
+            except:
+                pass
+
+    def handle_login(self):
+        login_type = self.login_type_combo.currentIndex()
+        
+        try:
+            if login_type == 0:  # 匿名登录
+                login.LoginViaAnonymousAccount()
+                self.login_info = {
+                    'type': 'anonymous',
+                    'phone': '',
+                    'cookie': '',
+                    'last_login': ''
+                }
+            elif login_type == 1:  # 手机号登录
+                phone = self.phone_input.text()
+                pwd = self.pwd_input.text()
+                if not phone or not pwd:
+                    QMessageBox.warning(self, "警告", "请输入手机号和密码")
+                    return
+                login.LoginViaCellphone(phone, pwd)
+                self.login_info = {
+                    'type': 'phone',
+                    'phone': phone,
+                    'cookie': pwd,  # 注意：这里存储密码可能不安全，实际应用中应该使用更安全的方式
+                    'last_login': ''
+                }
+            elif login_type == 2:  # Cookie登录
+                cookie = self.cookie_input.text()
+                if not cookie:
+                    QMessageBox.warning(self, "警告", "请输入Cookie")
+                    return
+                login.LoginViaCookie(cookie)
+                self.login_info = {
+                    'type': 'cookie',
+                    'phone': '',
+                    'cookie': cookie,
+                    'last_login': ''
+                }
+            
+            # 保存登录信息
+            self.save_config()
+            
+            # 登录成功后更新UI状态
+            self.update_login_status()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "登录失败", str(e))
+
+    def update_login_status(self):
+        session = GetCurrentSession()
+        if session.logged_in:
+            if session.is_anonymous:
+                status_text = f"匿名登录成功 (UID: {session.uid})"
+            else:
+                status_text = f"登录成功 - {session.nickname} (VIP {session.vipType})"
+            self.login_info_label.setText(status_text)
+            self.login_info_label.setStyleSheet("color: #4CAF50; font-size: 12px;")
+        else:
+            self.login_info_label.setText("未登录")
+            self.login_info_label.setStyleSheet("color: #666; font-size: 12px;")
+
+    def create_url_section(self, parent_layout):
+        url_group = QGroupBox("下载链接")
+        url_layout = QVBoxLayout()
+        
+        # 添加链接输入框
+        self.url_input = QTextEdit()
+        self.url_input.setPlaceholderText("输入网易云音乐分享链接，每行一个")
+        url_layout.addWidget(self.url_input)
+        
+        # 添加下载按钮
+        download_btn = QPushButton("开始下载")
+        download_btn.clicked.connect(self.start_download)
+        url_layout.addWidget(download_btn)
+        
+        url_group.setLayout(url_layout)
+        parent_layout.addWidget(url_group)
+        
+    def create_options_section(self, parent_layout):
+        options_group = QGroupBox("下载选项")
+        options_layout = QFormLayout()
+        
+        self.quality_combo = QComboBox()
+        self.quality_combo.addItems(["lossless", "standard", "exhigh", "hires"])
+        self.quality_combo.setCurrentText("lossless")
+        
+        self.output_dir = QLineEdit()
+        self.output_dir.setText(self.last_output_dir)  # 使用保存的目录
+        self.browse_btn = QPushButton("浏览")
+        self.browse_btn.clicked.connect(self.browse_output_dir)
+        
+        options_layout.addRow("音质:", self.quality_combo)
+        options_layout.addRow("保存位置:", self.output_dir)
+        options_layout.addRow("", self.browse_btn)
+        
+        options_group.setLayout(options_layout)
+        parent_layout.addWidget(options_group)
+        
+    def create_progress_section(self, parent_layout):
+        progress_group = QGroupBox("下载进度")
+        progress_layout = QVBoxLayout()
+        
+        self.progress_bar = QProgressBar()
+        self.status_label = QLabel("就绪")
+        
+        progress_layout.addWidget(self.progress_bar)
+        progress_layout.addWidget(self.status_label)
+        
+        progress_group.setLayout(progress_layout)
+        parent_layout.addWidget(progress_group)
+        
+    def create_download_list_section(self, parent_layout):
+        list_group = QGroupBox("下载列表")
+        list_layout = QVBoxLayout()
+        
+        self.download_list = QTableWidget()
+        self.download_list.setColumnCount(3)
+        self.download_list.setHorizontalHeaderLabels(["歌曲", "状态", "进度"])
+        
+        # 调整列宽比例
+        self.download_list.setColumnWidth(0, 400)  # 减小歌曲名列宽度
+        self.download_list.setColumnWidth(1, 100)  # 减小状态列宽度
+        self.download_list.setColumnWidth(2, 100)  # 减小进度列宽度
+        
+        # 设置表格的其他属性
+        self.download_list.setAlternatingRowColors(True)
+        self.download_list.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.download_list.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.download_list.horizontalHeader().setStretchLastSection(True)
+        self.download_list.verticalHeader().setVisible(False)
+        
+        # 设置默认行高
+        self.download_list.verticalHeader().setDefaultSectionSize(25)  # 减小行高
+        
+        # 设置表头样式
+        header = self.download_list.horizontalHeader()
+        header.setFixedHeight(25)  # 设置表头高度
+        header.setStyleSheet("""
+            QHeaderView::section {
+                background-color: #323232;
+                padding: 2px;
+                border: 1px solid #3d3d3d;
+                font-weight: bold;
+                color: #ffffff;
+                font-size: 12px;
+            }
+        """)
+        
+        # 设置表格样式
+        self.download_list.setStyleSheet("""
+            QTableWidget {
+                border: 1px solid #3d3d3d;
+                border-radius: 4px;
+                background-color: #2b2b2b;
+                gridline-color: #3d3d3d;
+                color: #ffffff;
+            }
+            QTableWidget::item {
+                padding: 2px;
+                color: #ffffff;
+                font-size: 12px;
+            }
+            QTableWidget::item:selected {
+                background-color: #3d3d3d;
+            }
+            QTableWidget::item:alternate {
+                background-color: #323232;
+            }
+        """)
+        
+        list_layout.addWidget(self.download_list)
+        list_group.setLayout(list_layout)
+        parent_layout.addWidget(list_group)
+        
+    def browse_output_dir(self):
+        dir_path = QFileDialog.getExistingDirectory(self, "选择保存目录", self.output_dir.text())
+        if dir_path:
+            self.output_dir.setText(dir_path)
+            self.save_config()  # 保存新的目录选择
+
+    def start_download(self):
+        urls = self.url_input.toPlainText().strip().split('\n')
+        if not urls:
+            QMessageBox.warning(self, "警告", "请输入下载链接")
+            return
+        
+        # 清空下载列表
+        self.download_list.setRowCount(0)
+        
+        # 创建一个模拟的 args 对象，包含所有必要的属性
+        class Args:
+            def __init__(self, quality, output):
+                self.quality = quality
+                self.output = output
+                self.max_workers = 4
+                self.output_name = "{title}"
+                self.lyric_no = ["yrc"]
+                self.no_overwrite = False
+                self.count = 0
+                self.sort_by = "default"
+                self.reverse_sort = False
+                self.use_download_api = False
+                self.save_m3u = ""  # 添加这个属性，默认为空字符串
+                self.user_bookmarks = False  # 添加这个属性
+                self.http = False  # 添加这个属性
+                self.deviceId = ""  # 添加这个属性
+        
+        # 从GUI组件获取值并创建Args对象
+        options = Args(
+            quality=self.quality_combo.currentText(),
+            output=self.output_dir.text()
+        )
+        
+        self.download_worker = DownloadWorker(urls, options)
+        self.download_worker.progress_updated.connect(self.update_progress)
+        self.download_worker.status_updated.connect(self.update_status)
+        self.download_worker.download_completed.connect(self.download_finished)
+        self.download_worker.task_added.connect(self.update_download_list)
+        self.download_worker.task_progress_updated.connect(self.update_task_progress)
+        self.download_worker.task_status_updated.connect(self.update_task_status)
+        self.download_worker.start()
+        
+    def update_progress(self, value):
+        self.progress_bar.setValue(value)
+        
+    def update_status(self, message):
+        self.status_label.setText(message)
+        
+    def download_finished(self):
+        QMessageBox.information(self, "完成", "下载完成")
+
+    def update_download_list(self, title, status):
+        row = self.download_list.rowCount()
+        self.download_list.insertRow(row)
+        
+        # 创建并设置歌曲名单元格
+        title_item = QTableWidgetItem(title)
+        title_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.download_list.setItem(row, 0, title_item)
+        
+        # 创建并设置状态单元格
+        status_item = QTableWidgetItem(status)
+        status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.download_list.setItem(row, 1, status_item)
+        
+        # 创建并设置进度单元格
+        progress_item = QTableWidgetItem("0%")
+        progress_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.download_list.setItem(row, 2, progress_item)
+        
+        # 设置行高
+        self.download_list.setRowHeight(row, 25)  # 减少行高
+
+    def update_task_status(self, row, status):
+        status_item = QTableWidgetItem(status)
+        status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.download_list.setItem(row, 1, status_item)
+
+    def update_task_progress(self, row, progress):
+        progress_item = QTableWidgetItem(f"{progress}%")
+        progress_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.download_list.setItem(row, 2, progress_item)
+
+    def create_menu_bar(self):
+        menubar = self.menuBar()
+        
+        # 文件菜单
+        file_menu = menubar.addMenu("文件")
+        exit_action = QAction("退出", self)
+        exit_action.triggered.connect(self.close)
+        file_menu.addAction(exit_action)
+        
+        # 帮助菜单
+        help_menu = menubar.addMenu("帮助")
+        about_action = QAction("关于", self)
+        about_action.triggered.connect(self.show_about)
+        help_menu.addAction(about_action)
+
+    def show_about(self):
+        QMessageBox.about(self, "关于", 
+            "网易云音乐下载器 v1.0\n\n"
+            "一个简单的网易云音乐下载工具\n"
+            "支持下载歌曲、歌单、专辑等")
+
+
+class DownloadWorker(QThread):
+    progress_updated = pyqtSignal(int)
+    status_updated = pyqtSignal(str)
+    download_completed = pyqtSignal()
+    task_added = pyqtSignal(str, str)
+    task_progress_updated = pyqtSignal(int, int)
+    task_status_updated = pyqtSignal(int, str)
+    
+    def __init__(self, urls, options):
+        super().__init__()
+        self.urls = urls
+        self.options = options
+        self.executor = TaskPoolExecutorThread(max_workers=options.max_workers)
+        self.executor.start()
+        self.task_rows = {}
+        self.current_row = 0  # 添加行计数器
+        
+    def run(self):
+        try:
+            queued_tasks = []
+            for url in self.urls:
+                try:
+                    # 解析URL
+                    rtype, ids = parse_sharelink(url)
+                    self.status_updated.emit(f"正在处理: {url}")
+                    
+                    # 创建下载任务
+                    subroutine = create_subroutine(rtype)(self.options, self.executor.task_queue.put)
+                    tasks = subroutine(ids)
+                    
+                    if tasks:  # 确保tasks不为空
+                        queued_tasks.extend(tasks)
+                        
+                        # 更新下载列表
+                        for task in tasks:
+                            if hasattr(task, 'song') and hasattr(task.song, 'Title'):
+                                self.task_added.emit(
+                                    task.song.Title,
+                                    "等待中"
+                                )
+                                self.task_rows[task.song.ID] = self.current_row
+                                self.current_row += 1
+                            else:
+                                self.task_added.emit(
+                                    f"未知歌曲 (ID: {task.id if hasattr(task, 'id') else 'unknown'})",
+                                    "等待中"
+                                )
+                                self.current_row += 1
+                    else:
+                        self.status_updated.emit(f"未找到可下载的内容: {url}")
+                        
+                except Exception as e:
+                    self.status_updated.emit(f"处理链接失败: {url} - {str(e)}")
+                    logger.exception(f"处理链接失败: {url}")
+                    continue
+            
+            if not queued_tasks:
+                self.status_updated.emit("没有可下载的任务")
+                self.download_completed.emit()
+                return
+                
+            # 等待所有任务完成
+            while self.executor.task_queue.unfinished_tasks > 0:
+                # 修改进度计算方式
+                total_tasks = len(queued_tasks)
+                finished_tasks = total_tasks - self.executor.task_queue.unfinished_tasks
+                progress = int((finished_tasks / total_tasks) * 100)
+                
+                self.progress_updated.emit(progress)
+                self.status_updated.emit(
+                    f"已下载: {self.executor.xfered >> 20} MB"
+                )
+                
+                # 更新每个任务的进度
+                for task in queued_tasks:
+                    if hasattr(task, 'song'):
+                        task_id = task.song.ID
+                        if task_id in self.task_rows:
+                            row = self.task_rows[task_id]
+                            # 更新状态
+                            self.task_status_updated.emit(row, "下载中")
+                            # 更新单个任务的进度
+                            task_progress = int((finished_tasks / total_tasks) * 100)
+                            self.task_progress_updated.emit(row, task_progress)
+                
+                sleep(0.5)
+                
+            # 所有任务完成时更新状态
+            for task in queued_tasks:
+                if hasattr(task, 'song'):
+                    task_id = task.song.ID
+                    if task_id in self.task_rows:
+                        row = self.task_rows[task_id]
+                        self.task_status_updated.emit(row, "已完成")
+                        self.task_progress_updated.emit(row, 100)
+            
+            # 确保最终进度显示为100%
+            self.progress_updated.emit(100)
+            self.download_completed.emit()
+            
+        except Exception as e:
+            self.status_updated.emit(f"下载出错: {str(e)}")
+            logger.exception("下载过程出错")
+
+
+class QRLoginWindow(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("扫码登录")
+        self.setMinimumSize(800, 600)  # 增加窗口宽度
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowMaximizeButtonHint)  # 添加最大化按钮
+        
+        # 创建布局
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)  # 移除边距
+        
+        # 创建网页视图
+        self.web_view = QWebEngineView()
+        self.web_view.setUrl(QUrl("https://music.163.com/#/login"))
+        
+        # 设置cookie监听
+        self.profile = QWebEngineProfile.defaultProfile()
+        self.profile.cookieStore().loadAllCookies()
+        self.profile.cookieStore().cookieAdded.connect(self.on_cookie_added)
+        
+        # 添加网页视图到布局
+        layout.addWidget(self.web_view)
+        
+        # 存储找到的MUSIC_U cookie
+        self.music_u_cookie = None
+        
+    def on_cookie_added(self, cookie):
+        """监听cookie变化"""
+        if cookie.name() == b'MUSIC_U':
+            self.music_u_cookie = cookie.value().data().decode()
+            # 找到MUSIC_U cookie后关闭窗口
+            self.accept()
+
+
 if __name__ == "__main__":
-    __main__()
-    sys.exit(0)
+    try:
+        app = QApplication(sys.argv)
+        window = PyNCMGUI()
+        window.show()
+        sys.exit(app.exec())
+    except Exception as e:
+        print(f"启动失败: {str(e)}")
+        sys.exit(1)
