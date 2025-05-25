@@ -8,7 +8,7 @@
 **注意** : 异步使用，请移步 [`async` 分支](https://github.com/mos9527/pyncm/tree/async)
 
 GUI 安装方式：
-执行python build.py buil
+    执行python build.py build
 
 # 安装
     pip install pyncm
