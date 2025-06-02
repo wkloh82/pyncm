@@ -1244,6 +1244,93 @@ class PyNCMGUI(QMainWindow):
         parent_layout.addWidget(progress_group)
         
     def create_download_list_section(self, parent_layout):
+        # 创建右侧主布局
+        right_layout = QVBoxLayout()
+        
+        # 创建歌单区域
+        playlist_group = QGroupBox("歌单")
+        playlist_layout = QVBoxLayout()
+        
+        # 添加歌单URL输入
+        url_layout = QHBoxLayout()
+        self.playlist_url_input = QLineEdit()
+        self.playlist_url_input.setPlaceholderText("输入歌单URL，例如：https://music.163.com/#/playlist?id=3559356")
+        self.playlist_url_input.setText("https://music.163.com/#/playlist?id=3559356")  # 设置默认值
+        load_btn = QPushButton("加载歌单")
+        load_btn.clicked.connect(self.load_playlist)
+        url_layout.addWidget(self.playlist_url_input)
+        url_layout.addWidget(load_btn)
+        playlist_layout.addLayout(url_layout)
+        
+        # 添加歌单歌曲列表
+        self.playlist_table = QTableWidget()
+        self.playlist_table.setColumnCount(5)
+        self.playlist_table.setHorizontalHeaderLabels(["选择", "歌曲", "歌手", "专辑", "ID"])
+        
+        # 调整列宽比例
+        self.playlist_table.setColumnWidth(0, 50)
+        self.playlist_table.setColumnWidth(1, 200)
+        self.playlist_table.setColumnWidth(2, 150)
+        self.playlist_table.setColumnWidth(3, 150)
+        self.playlist_table.setColumnWidth(4, 100)
+        
+        # 设置表格的其他属性
+        self.playlist_table.setAlternatingRowColors(True)
+        self.playlist_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.playlist_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.playlist_table.horizontalHeader().setStretchLastSection(True)
+        self.playlist_table.verticalHeader().setVisible(False)
+        
+        # 设置默认行高
+        self.playlist_table.verticalHeader().setDefaultSectionSize(25)
+        
+        # 设置表头样式
+        header = self.playlist_table.horizontalHeader()
+        header.setFixedHeight(25)
+        header.setStyleSheet("""
+            QHeaderView::section {
+                background-color: #323232;
+                padding: 2px;
+                border: 1px solid #3d3d3d;
+                font-weight: bold;
+                color: #ffffff;
+                font-size: 12px;
+            }
+        """)
+        
+        # 设置表格样式
+        self.playlist_table.setStyleSheet("""
+            QTableWidget {
+                border: 1px solid #3d3d3d;
+                border-radius: 4px;
+                background-color: #2b2b2b;
+                gridline-color: #3d3d3d;
+                color: #ffffff;
+            }
+            QTableWidget::item {
+                padding: 2px;
+                color: #ffffff;
+                font-size: 12px;
+            }
+            QTableWidget::item:selected {
+                background-color: #3d3d3d;
+            }
+            QTableWidget::item:alternate {
+                background-color: #323232;
+            }
+        """)
+        
+        playlist_layout.addWidget(self.playlist_table)
+        
+        # 添加下载选中歌曲按钮
+        download_selected_btn = QPushButton("下载选中歌曲")
+        download_selected_btn.clicked.connect(self.download_selected_songs)
+        playlist_layout.addWidget(download_selected_btn)
+        
+        playlist_group.setLayout(playlist_layout)
+        right_layout.addWidget(playlist_group)
+        
+        # 创建下载列表区域
         list_group = QGroupBox("下载列表")
         list_layout = QVBoxLayout()
         
@@ -1252,9 +1339,9 @@ class PyNCMGUI(QMainWindow):
         self.download_list.setHorizontalHeaderLabels(["歌曲", "状态", "进度"])
         
         # 调整列宽比例
-        self.download_list.setColumnWidth(0, 400)  # 减小歌曲名列宽度
-        self.download_list.setColumnWidth(1, 100)  # 减小状态列宽度
-        self.download_list.setColumnWidth(2, 100)  # 减小进度列宽度
+        self.download_list.setColumnWidth(0, 400)
+        self.download_list.setColumnWidth(1, 100)
+        self.download_list.setColumnWidth(2, 100)
         
         # 设置表格的其他属性
         self.download_list.setAlternatingRowColors(True)
@@ -1264,11 +1351,11 @@ class PyNCMGUI(QMainWindow):
         self.download_list.verticalHeader().setVisible(False)
         
         # 设置默认行高
-        self.download_list.verticalHeader().setDefaultSectionSize(25)  # 减小行高
+        self.download_list.verticalHeader().setDefaultSectionSize(25)
         
         # 设置表头样式
         header = self.download_list.horizontalHeader()
-        header.setFixedHeight(25)  # 设置表头高度
+        header.setFixedHeight(25)
         header.setStyleSheet("""
             QHeaderView::section {
                 background-color: #323232;
@@ -1304,56 +1391,113 @@ class PyNCMGUI(QMainWindow):
         
         list_layout.addWidget(self.download_list)
         list_group.setLayout(list_layout)
-        parent_layout.addWidget(list_group)
+        right_layout.addWidget(list_group)
         
-    def browse_output_dir(self):
-        dir_path = QFileDialog.getExistingDirectory(self, "选择保存目录", self.output_dir.text())
-        if dir_path:
-            self.output_dir.setText(dir_path)
-            self.save_config()  # 保存新的目录选择
+        parent_layout.addLayout(right_layout)
 
-    def start_download(self):
-        urls = self.url_input.toPlainText().strip().split('\n')
-        if not urls:
-            QMessageBox.warning(self, "警告", "请输入下载链接")
+    def load_playlist(self):
+        """加载歌单内容"""
+        url = self.playlist_url_input.text().strip()
+        if not url:
+            QMessageBox.warning(self, "警告", "请输入歌单URL")
             return
-        
-        # 清空下载列表
-        self.download_list.setRowCount(0)
-        
-        # 创建一个模拟的 args 对象，包含所有必要的属性
-        class Args:
-            def __init__(self, quality, output):
-                self.quality = quality
-                self.output = output
-                self.max_workers = 4
-                self.output_name = "{title}"
-                self.lyric_no = ["yrc"]
-                self.no_overwrite = False
-                self.count = 0
-                self.sort_by = "default"
-                self.reverse_sort = False
-                self.use_download_api = False
-                self.save_m3u = ""  # 添加这个属性，默认为空字符串
-                self.user_bookmarks = False  # 添加这个属性
-                self.http = False  # 添加这个属性
-                self.deviceId = ""  # 添加这个属性
-        
-        # 从GUI组件获取值并创建Args对象
-        options = Args(
-            quality=self.quality_combo.currentText(),
-            output=self.output_dir.text()
-        )
-        
-        self.download_worker = DownloadWorker(urls, options)
-        self.download_worker.progress_updated.connect(self.update_progress)
-        self.download_worker.status_updated.connect(self.update_status)
-        self.download_worker.download_completed.connect(self.download_finished)
-        self.download_worker.task_added.connect(self.update_download_list)
-        self.download_worker.task_progress_updated.connect(self.update_task_progress)
-        self.download_worker.task_status_updated.connect(self.update_task_status)
-        self.download_worker.start()
-        
+            
+        # 检查登录状态
+        session = GetCurrentSession()
+        if not session.logged_in or session.is_anonymous:
+            QMessageBox.warning(self, "警告", "请先登录网易云音乐账号")
+            return
+            
+        try:
+            # 解析歌单ID
+            rtype, ids = parse_sharelink(url)
+            if rtype != "playlist":
+                QMessageBox.warning(self, "警告", "请输入正确的歌单URL")
+                return
+                
+            # 获取歌单信息
+            playlist_info = playlist.GetPlaylistInfo(ids[0])
+            if not playlist_info or "playlist" not in playlist_info:
+                QMessageBox.warning(self, "警告", "获取歌单信息失败")
+                return
+                
+            # 清空现有列表
+            self.playlist_table.setRowCount(0)
+            
+            # 获取歌单中的歌曲
+            track_ids = [tid.get("id") for tid in playlist_info["playlist"]["trackIds"]]
+            songs_info = track.GetTrackDetail(track_ids).get("songs", [])
+            
+            # 添加歌曲到表格
+            for song in songs_info:
+                row = self.playlist_table.rowCount()
+                self.playlist_table.insertRow(row)
+                
+                # 添加复选框
+                checkbox = QTableWidgetItem()
+                checkbox.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+                checkbox.setCheckState(Qt.CheckState.Unchecked)
+                self.playlist_table.setItem(row, 0, checkbox)
+                
+                # 添加歌曲信息
+                self.playlist_table.setItem(row, 1, QTableWidgetItem(song.get("name", "")))
+                
+                # 安全地处理艺术家信息
+                artists = []
+                for ar in song.get("ar", []):
+                    if ar and isinstance(ar, dict):
+                        name = ar.get("name")
+                        if name:
+                            artists.append(name)
+                self.playlist_table.setItem(row, 2, QTableWidgetItem(", ".join(artists)))
+                
+                # 安全地处理专辑信息
+                album_name = ""
+                if isinstance(song.get("al"), dict):
+                    album_name = song["al"].get("name", "")
+                self.playlist_table.setItem(row, 3, QTableWidgetItem(album_name))
+                
+                # 存储歌曲ID
+                song_id = str(song.get("id", ""))
+                id_item = QTableWidgetItem(song_id)
+                self.playlist_table.setItem(row, 4, id_item)
+                
+            # 设置表格列宽
+            self.playlist_table.setColumnWidth(0, 50)  # 选择列
+            self.playlist_table.setColumnWidth(1, 200)  # 歌曲列
+            self.playlist_table.setColumnWidth(2, 150)  # 歌手列
+            self.playlist_table.setColumnWidth(3, 150)  # 专辑列
+            self.playlist_table.setColumnWidth(4, 100)  # ID列
+                
+            QMessageBox.information(self, "成功", f"已加载歌单：{playlist_info['playlist']['name']}")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"加载歌单失败：{str(e)}")
+            logger.exception("加载歌单失败")
+
+    def download_selected_songs(self):
+        """下载选中的歌曲"""
+        selected_urls = []
+        # 获取所有选中的歌曲
+        for row in range(self.playlist_table.rowCount()):
+            checkbox_item = self.playlist_table.item(row, 0)
+            if checkbox_item and checkbox_item.checkState() == Qt.CheckState.Checked:
+                id_item = self.playlist_table.item(row, 4)
+                if id_item and id_item.text():
+                    song_id = id_item.text()
+                    song_url = f"https://music.163.com/#/song?id={song_id}"
+                    selected_urls.append(song_url)
+        if not selected_urls:
+            QMessageBox.warning(self, "警告", "请选择要下载的歌曲")
+            return
+        # 将选中的歌曲URL添加到下载链接输入框
+        current_urls = self.url_input.toPlainText().strip()
+        if current_urls:
+            current_urls += "\n"
+        self.url_input.setText(current_urls + "\n".join(selected_urls))
+        # 自动开始下载
+        self.start_download()
+
     def update_progress(self, value):
         self.progress_bar.setValue(value)
         
@@ -1416,6 +1560,54 @@ class PyNCMGUI(QMainWindow):
             "一个简单的网易云音乐下载工具\n"
             "支持下载歌曲、歌单、专辑等")
 
+    def browse_output_dir(self):
+        dir_path = QFileDialog.getExistingDirectory(self, "选择保存目录", self.output_dir.text())
+        if dir_path:
+            self.output_dir.setText(dir_path)
+            self.save_config()  # 保存新的目录选择
+
+    def start_download(self):
+        urls = self.url_input.toPlainText().strip().split('\n')
+        if not urls:
+            QMessageBox.warning(self, "警告", "请输入下载链接")
+            return
+            
+        # 清空下载列表
+        self.download_list.setRowCount(0)
+        
+        # 创建一个模拟的 args 对象，包含所有必要的属性
+        class Args:
+            def __init__(self, quality, output):
+                self.quality = quality
+                self.output = output
+                self.max_workers = 4
+                self.output_name = "{title}"
+                self.lyric_no = ["yrc"]
+                self.no_overwrite = False
+                self.count = 0
+                self.sort_by = "default"
+                self.reverse_sort = False
+                self.use_download_api = False
+                self.save_m3u = ""
+                self.user_bookmarks = False
+                self.http = False
+                self.deviceId = ""
+        
+        # 从GUI组件获取值并创建Args对象
+        options = Args(
+            quality=self.quality_combo.currentText(),
+            output=self.output_dir.text()
+        )
+        
+        self.download_worker = DownloadWorker(urls, options)
+        self.download_worker.progress_updated.connect(self.update_progress)
+        self.download_worker.status_updated.connect(self.update_status)
+        self.download_worker.download_completed.connect(self.download_finished)
+        self.download_worker.task_added.connect(self.update_download_list)
+        self.download_worker.task_progress_updated.connect(self.update_task_progress)
+        self.download_worker.task_status_updated.connect(self.update_task_status)
+        self.download_worker.start()
+
 
 class DownloadWorker(QThread):
     progress_updated = pyqtSignal(int)
@@ -1425,29 +1617,36 @@ class DownloadWorker(QThread):
     task_progress_updated = pyqtSignal(int, int)
     task_status_updated = pyqtSignal(int, str)
     
-    def __init__(self, urls, options):
+    def __init__(self, urls, options, is_song_list=False):
         super().__init__()
         self.urls = urls
         self.options = options
         self.executor = TaskPoolExecutorThread(max_workers=options.max_workers)
         self.executor.start()
         self.task_rows = {}
-        self.current_row = 0  # 添加行计数器
+        self.current_row = 0
+        self.is_song_list = is_song_list
+        self.task_progress = {}  # 存储每个任务的进度
         
     def run(self):
         try:
             queued_tasks = []
-            for url in self.urls:
+            
+            if self.is_song_list:
+                # 直接处理歌曲ID列表
                 try:
-                    # 解析URL
-                    rtype, ids = parse_sharelink(url)
-                    self.status_updated.emit(f"正在处理: {url}")
-                    
+                    # 获取歌曲详情
+                    songs_info = track.GetTrackDetail(self.urls).get("songs", [])
+                    if not songs_info:
+                        self.status_updated.emit("未找到可下载的歌曲")
+                        self.download_completed.emit()
+                        return
+                        
                     # 创建下载任务
-                    subroutine = create_subroutine(rtype)(self.options, self.executor.task_queue.put)
-                    tasks = subroutine(ids)
+                    subroutine = create_subroutine("song")(self.options, self.executor.task_queue.put)
+                    tasks = subroutine([song["id"] for song in songs_info])
                     
-                    if tasks:  # 确保tasks不为空
+                    if tasks:
                         queued_tasks.extend(tasks)
                         
                         # 更新下载列表
@@ -1458,6 +1657,7 @@ class DownloadWorker(QThread):
                                     "等待中"
                                 )
                                 self.task_rows[task.song.ID] = self.current_row
+                                self.task_progress[task.song.ID] = 0  # 初始化进度
                                 self.current_row += 1
                             else:
                                 self.task_added.emit(
@@ -1465,13 +1665,48 @@ class DownloadWorker(QThread):
                                     "等待中"
                                 )
                                 self.current_row += 1
-                    else:
-                        self.status_updated.emit(f"未找到可下载的内容: {url}")
-                        
                 except Exception as e:
-                    self.status_updated.emit(f"处理链接失败: {url} - {str(e)}")
-                    logger.exception(f"处理链接失败: {url}")
-                    continue
+                    self.status_updated.emit(f"处理歌曲列表失败: {str(e)}")
+                    logger.exception("处理歌曲列表失败")
+                    return
+            else:
+                # 处理URL列表
+                for url in self.urls:
+                    try:
+                        # 解析URL
+                        rtype, ids = parse_sharelink(url)
+                        self.status_updated.emit(f"正在处理: {url}")
+                        
+                        # 创建下载任务
+                        subroutine = create_subroutine(rtype)(self.options, self.executor.task_queue.put)
+                        tasks = subroutine(ids)
+                        
+                        if tasks:
+                            queued_tasks.extend(tasks)
+                            
+                            # 更新下载列表
+                            for task in tasks:
+                                if hasattr(task, 'song') and hasattr(task.song, 'Title'):
+                                    self.task_added.emit(
+                                        task.song.Title,
+                                        "等待中"
+                                    )
+                                    self.task_rows[task.song.ID] = self.current_row
+                                    self.task_progress[task.song.ID] = 0  # 初始化进度
+                                    self.current_row += 1
+                                else:
+                                    self.task_added.emit(
+                                        f"未知歌曲 (ID: {task.id if hasattr(task, 'id') else 'unknown'})",
+                                        "等待中"
+                                    )
+                                    self.current_row += 1
+                        else:
+                            self.status_updated.emit(f"未找到可下载的内容: {url}")
+                            
+                    except Exception as e:
+                        self.status_updated.emit(f"处理链接失败: {url} - {str(e)}")
+                        logger.exception(f"处理链接失败: {url}")
+                        continue
             
             if not queued_tasks:
                 self.status_updated.emit("没有可下载的任务")
@@ -1479,13 +1714,16 @@ class DownloadWorker(QThread):
                 return
                 
             # 等待所有任务完成
+            total_tasks = len(queued_tasks)
+            finished_tasks = 0
+            
             while self.executor.task_queue.unfinished_tasks > 0:
-                # 修改进度计算方式
-                total_tasks = len(queued_tasks)
+                # 计算总体进度
                 finished_tasks = total_tasks - self.executor.task_queue.unfinished_tasks
-                progress = int((finished_tasks / total_tasks) * 100)
+                total_progress = int((finished_tasks / total_tasks) * 100)
                 
-                self.progress_updated.emit(progress)
+                # 更新总体进度
+                self.progress_updated.emit(total_progress)
                 self.status_updated.emit(
                     f"已下载: {self.executor.xfered >> 20} MB"
                 )
@@ -1496,15 +1734,24 @@ class DownloadWorker(QThread):
                         task_id = task.song.ID
                         if task_id in self.task_rows:
                             row = self.task_rows[task_id]
+                            
+                            # 计算单个任务的进度
+                            if task_id in self.task_progress:
+                                # 根据总体进度和任务完成情况更新单个任务进度
+                                task_progress = min(100, int((finished_tasks / total_tasks) * 100))
+                                if task_progress > self.task_progress[task_id]:
+                                    self.task_progress[task_id] = task_progress
+                                    self.task_progress_updated.emit(row, task_progress)
+                                    
                             # 更新状态
-                            self.task_status_updated.emit(row, "下载中")
-                            # 更新单个任务的进度
-                            task_progress = int((finished_tasks / total_tasks) * 100)
-                            self.task_progress_updated.emit(row, task_progress)
+                            if finished_tasks == total_tasks:
+                                self.task_status_updated.emit(row, "已完成")
+                            else:
+                                self.task_status_updated.emit(row, "下载中")
                 
-                sleep(0.5)
+                sleep(0.1)  # 更频繁地更新进度
                 
-            # 所有任务完成时更新状态
+            # 确保所有任务显示100%进度
             for task in queued_tasks:
                 if hasattr(task, 'song'):
                     task_id = task.song.ID
