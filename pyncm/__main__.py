@@ -1242,7 +1242,101 @@ class PyNCMGUI(QMainWindow):
         
         progress_group.setLayout(progress_layout)
         parent_layout.addWidget(progress_group)
+    
+    def handle_cell_click(self, row, column):
+        """处理表格单元格点击事件"""
+        if column == 0:  # 只处理第一列（复选框列）的点击
+            # 获取所有选中的行
+            selected_rows = set(item.row() for item in self.playlist_table.selectedItems())
+            
+            # 如果没有其他选中的行，就只切换当前行的状态
+            if not selected_rows or (len(selected_rows) == 1 and row in selected_rows):
+                item = self.playlist_table.item(row, 0)
+                if item:
+                    current_state = item.checkState()
+                    new_state = Qt.CheckState.Checked if current_state == Qt.CheckState.Unchecked else Qt.CheckState.Unchecked
+                    item.setCheckState(new_state)
+                    # 更新选中计数
+                    self.update_selection_counter()
+            # 如果有其他选中的行，则切换所有选中行的状态
+            else:
+                item = self.playlist_table.item(row, 0)
+                if item:
+                    new_state = Qt.CheckState.Checked if item.checkState() == Qt.CheckState.Unchecked else Qt.CheckState.Unchecked
+                    for selected_row in selected_rows:
+                        selected_item = self.playlist_table.item(selected_row, 0)
+                        if selected_item:
+                            selected_item.setCheckState(new_state)
+                    # 更新选中计数
+                    self.update_selection_counter()
+    
+    def handle_cell_changed(self, row, column):
+        """处理表格单元格变化事件"""
+        if column == 0:  # 只处理第一列（复选框列）的变化
+            item = self.playlist_table.item(row, column)
+            if item:
+                # 确保复选框状态正确设置
+                if not item.flags() & Qt.ItemFlag.ItemIsUserCheckable:
+                    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                    item.setCheckState(Qt.CheckState.Unchecked)
+                # 更新选中计数
+                self.update_selection_counter()
+
+    def handle_selection_changed(self):
+        """处理表格选择变化事件"""
+        # 获取所有选中的行
+        selected_rows = set(item.row() for item in self.playlist_table.selectedItems())
         
+        # 如果有选中的行，更新它们的复选框状态
+        if selected_rows:
+            # 获取第一个选中项的状态，用于决定是全选还是全不选
+            first_row = min(selected_rows)
+            first_item = self.playlist_table.item(first_row, 0)
+            if first_item:
+                new_state = Qt.CheckState.Checked if first_item.checkState() == Qt.CheckState.Unchecked else Qt.CheckState.Unchecked
+                
+                # 更新所有选中行的复选框状态
+                for row in selected_rows:
+                    item = self.playlist_table.item(row, 0)
+                    if item:
+                        item.setCheckState(new_state)
+                # 更新选中计数
+                self.update_selection_counter()
+
+    def update_selection_counter(self):
+        """更新选中歌曲计数器"""
+        checked_count = 0
+        total_count = self.playlist_table.rowCount()
+        
+        for row in range(total_count):
+            item = self.playlist_table.item(row, 0)
+            if item and item.checkState() == Qt.CheckState.Checked:
+                checked_count += 1
+        
+        # 更新计数器显示
+        self.selection_counter.setText(f"已选择: {checked_count} / {total_count} 首")
+        
+        # 更新全选按钮的文本
+        if checked_count == total_count and total_count > 0:
+            self.select_all_btn.setText("取消全选")
+        else:
+            self.select_all_btn.setText("全选")
+
+    def toggle_select_all(self):
+        """切换全选/取消全选状态"""
+        is_select_all = self.select_all_btn.text() == "全选"
+        
+        # 更新所有复选框的状态
+        for row in range(self.playlist_table.rowCount()):
+            item = self.playlist_table.item(row, 0)
+            if item:
+                item.setCheckState(Qt.CheckState.Checked if is_select_all else Qt.CheckState.Unchecked)
+        
+        # 更新选中计数
+        self.update_selection_counter()
+        
+        # 更新按钮文本 - 不需要在这里更新，因为update_selection_counter已经会处理
+
     def create_download_list_section(self, parent_layout):
         # 创建右侧主布局
         right_layout = QVBoxLayout()
@@ -1261,6 +1355,20 @@ class PyNCMGUI(QMainWindow):
         url_layout.addWidget(self.playlist_url_input)
         url_layout.addWidget(load_btn)
         playlist_layout.addLayout(url_layout)
+
+        # 添加选中计数器
+        self.selection_counter = QLabel("已选择: 0 首")
+        self.selection_counter.setStyleSheet("""
+            QLabel {
+                color: #2196F3;
+                font-size: 12px;
+                padding: 5px;
+                background: rgba(33, 150, 243, 0.1);
+                border-radius: 4px;
+                margin: 5px 0;
+            }
+        """)
+        playlist_layout.addWidget(self.selection_counter)
         
         # 添加歌单歌曲列表
         self.playlist_table = QTableWidget()
@@ -1276,10 +1384,18 @@ class PyNCMGUI(QMainWindow):
         
         # 设置表格的其他属性
         self.playlist_table.setAlternatingRowColors(True)
+        self.playlist_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)  # 允许多选
         self.playlist_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.playlist_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.playlist_table.horizontalHeader().setStretchLastSection(True)
         self.playlist_table.verticalHeader().setVisible(False)
+        
+        # 添加单元格点击事件处理
+        self.playlist_table.cellClicked.connect(self.handle_cell_click)
+        self.playlist_table.cellChanged.connect(self.handle_cell_changed)
+        
+        # 添加选择变化事件处理
+        self.playlist_table.itemSelectionChanged.connect(self.handle_selection_changed)
         
         # 设置默认行高
         self.playlist_table.verticalHeader().setDefaultSectionSize(25)
@@ -1311,21 +1427,101 @@ class PyNCMGUI(QMainWindow):
                 padding: 2px;
                 color: #ffffff;
                 font-size: 12px;
+                border-bottom: 1px solid #3d3d3d;
             }
             QTableWidget::item:selected {
-                background-color: #3d3d3d;
+                background-color: rgba(33, 150, 243, 0.2);
+                color: #ffffff;
             }
             QTableWidget::item:alternate {
                 background-color: #323232;
+            }
+            QTableWidget::item:alternate:selected {
+                background-color: rgba(33, 150, 243, 0.2);
+                color: #ffffff;
+            }
+            QTableWidget::indicator {
+                width: 18px;
+                height: 18px;
+                border-radius: 3px;
+                margin: 3px;
+            }
+            QTableWidget::indicator:unchecked {
+                background-color: transparent;
+                border: 2px solid rgba(255, 255, 255, 0.3);
+            }
+            QTableWidget::indicator:unchecked:hover {
+                border-color: rgba(33, 150, 243, 0.5);
+            }
+            QTableWidget::indicator:checked {
+                background-color: #2196F3;
+                border: none;
+                image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 18 18'%3E%3Cpath d='M6.5 12.5l-4-4 1.5-1.5 2.5 2.5 5.5-5.5 1.5 1.5z' fill='white'/%3E%3C/svg%3E");
+            }
+            QTableWidget::item:selected:active {
+                background-color: rgba(33, 150, 243, 0.3);
+                color: #ffffff;
+            }
+            QTableWidget::item:selected:!active {
+                background-color: rgba(33, 150, 243, 0.2);
+                color: #ffffff;
+            }
+            QTableWidget::item:hover {
+                background-color: rgba(255, 255, 255, 0.05);
+            }
+            QTableWidget::item:selected:hover {
+                background-color: rgba(33, 150, 243, 0.4);
             }
         """)
         
         playlist_layout.addWidget(self.playlist_table)
         
+        # 创建按钮布局
+        button_layout = QHBoxLayout()
+        
+        # 添加全选/取消全选按钮
+        self.select_all_btn = QPushButton("全选")
+        self.select_all_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                border: none;
+                padding: 5px 15px;
+                border-radius: 4px;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #1976D2;
+            }
+            QPushButton:pressed {
+                background-color: #0D47A1;
+            }
+        """)
+        self.select_all_btn.clicked.connect(self.toggle_select_all)
+        button_layout.addWidget(self.select_all_btn)
+        
         # 添加下载选中歌曲按钮
         download_selected_btn = QPushButton("下载选中歌曲")
+        download_selected_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                border: none;
+                padding: 5px 15px;
+                border-radius: 4px;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #388E3C;
+            }
+            QPushButton:pressed {
+                background-color: #1B5E20;
+            }
+        """)
         download_selected_btn.clicked.connect(self.download_selected_songs)
-        playlist_layout.addWidget(download_selected_btn)
+        button_layout.addWidget(download_selected_btn)
+        
+        playlist_layout.addLayout(button_layout)
         
         playlist_group.setLayout(playlist_layout)
         right_layout.addWidget(playlist_group)
@@ -1395,6 +1591,100 @@ class PyNCMGUI(QMainWindow):
         
         parent_layout.addLayout(right_layout)
 
+    def handle_cell_click(self, row, column):
+        """处理表格单元格点击事件"""
+        if column == 0:  # 只处理第一列（复选框列）的点击
+            # 获取所有选中的行
+            selected_rows = set(item.row() for item in self.playlist_table.selectedItems())
+            
+            # 如果没有其他选中的行，就只切换当前行的状态
+            if not selected_rows or (len(selected_rows) == 1 and row in selected_rows):
+                item = self.playlist_table.item(row, 0)
+                if item:
+                    current_state = item.checkState()
+                    new_state = Qt.CheckState.Checked if current_state == Qt.CheckState.Unchecked else Qt.CheckState.Unchecked
+                    item.setCheckState(new_state)
+                    # 更新选中计数
+                    self.update_selection_counter()
+            # 如果有其他选中的行，则切换所有选中行的状态
+            else:
+                item = self.playlist_table.item(row, 0)
+                if item:
+                    new_state = Qt.CheckState.Checked if item.checkState() == Qt.CheckState.Unchecked else Qt.CheckState.Unchecked
+                    for selected_row in selected_rows:
+                        selected_item = self.playlist_table.item(selected_row, 0)
+                        if selected_item:
+                            selected_item.setCheckState(new_state)
+                    # 更新选中计数
+                    self.update_selection_counter()
+
+    def handle_cell_changed(self, row, column):
+        """处理表格单元格变化事件"""
+        if column == 0:  # 只处理第一列（复选框列）的变化
+            item = self.playlist_table.item(row, column)
+            if item:
+                # 确保复选框状态正确设置
+                if not item.flags() & Qt.ItemFlag.ItemIsUserCheckable:
+                    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                    item.setCheckState(Qt.CheckState.Unchecked)
+                # 更新选中计数
+                self.update_selection_counter()
+
+    def handle_selection_changed(self):
+        """处理表格选择变化事件"""
+        # 获取所有选中的行
+        selected_rows = set(item.row() for item in self.playlist_table.selectedItems())
+        
+        # 如果有选中的行，更新它们的复选框状态
+        if selected_rows:
+            # 获取第一个选中项的状态，用于决定是全选还是全不选
+            first_row = min(selected_rows)
+            first_item = self.playlist_table.item(first_row, 0)
+            if first_item:
+                new_state = Qt.CheckState.Checked if first_item.checkState() == Qt.CheckState.Unchecked else Qt.CheckState.Unchecked
+                
+                # 更新所有选中行的复选框状态
+                for row in selected_rows:
+                    item = self.playlist_table.item(row, 0)
+                    if item:
+                        item.setCheckState(new_state)
+                # 更新选中计数
+                self.update_selection_counter()
+
+    def update_selection_counter(self):
+        """更新选中歌曲计数器"""
+        checked_count = 0
+        total_count = self.playlist_table.rowCount()
+        
+        for row in range(total_count):
+            item = self.playlist_table.item(row, 0)
+            if item and item.checkState() == Qt.CheckState.Checked:
+                checked_count += 1
+        
+        # 更新计数器显示
+        self.selection_counter.setText(f"已选择: {checked_count} / {total_count} 首")
+        
+        # 更新全选按钮的文本
+        if checked_count == total_count and total_count > 0:
+            self.select_all_btn.setText("取消全选")
+        else:
+            self.select_all_btn.setText("全选")
+
+    def toggle_select_all(self):
+        """切换全选/取消全选状态"""
+        is_select_all = self.select_all_btn.text() == "全选"
+        
+        # 更新所有复选框的状态
+        for row in range(self.playlist_table.rowCount()):
+            item = self.playlist_table.item(row, 0)
+            if item:
+                item.setCheckState(Qt.CheckState.Checked if is_select_all else Qt.CheckState.Unchecked)
+        
+        # 更新选中计数
+        self.update_selection_counter()
+        
+        # 更新按钮文本 - 不需要在这里更新，因为update_selection_counter已经会处理
+
     def load_playlist(self):
         """加载歌单内容"""
         url = self.playlist_url_input.text().strip()
@@ -1435,7 +1725,7 @@ class PyNCMGUI(QMainWindow):
                 
                 # 添加复选框
                 checkbox = QTableWidgetItem()
-                checkbox.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+                checkbox.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
                 checkbox.setCheckState(Qt.CheckState.Unchecked)
                 self.playlist_table.setItem(row, 0, checkbox)
                 
@@ -1468,6 +1758,9 @@ class PyNCMGUI(QMainWindow):
             self.playlist_table.setColumnWidth(2, 150)  # 歌手列
             self.playlist_table.setColumnWidth(3, 150)  # 专辑列
             self.playlist_table.setColumnWidth(4, 100)  # ID列
+            
+            # 初始化选中计数器
+            self.update_selection_counter()
                 
             QMessageBox.information(self, "成功", f"已加载歌单：{playlist_info['playlist']['name']}")
             
