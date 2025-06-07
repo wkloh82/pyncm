@@ -929,8 +929,12 @@ class PyNCMGUI(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("网易云音乐下载器")
-        self.setMinimumSize(1200, 700)  # 减小窗口默认尺寸
-        self.setWindowIcon(QIcon("icon.ico"))
+        self.setMinimumSize(1200, 700)  # 增加窗口默认宽度以适应三栏布局
+        
+        # 设置图标，使用相对路径
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "icon.ico")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
         
         # 配置文件路径
         self.config_file = Path.home() / '.pyncm' / 'config.json'
@@ -943,10 +947,13 @@ class PyNCMGUI(QMainWindow):
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
         
-        # 创建水平布局作为主布局
-        main_layout = QHBoxLayout(main_widget)
+        # 创建垂直布局作为主布局
+        main_layout = QVBoxLayout(main_widget)
         main_layout.setSpacing(10)  # 减小间距
         main_layout.setContentsMargins(10, 10, 10, 10)  # 减小边距
+        
+        # 创建上部水平布局
+        top_layout = QHBoxLayout()
         
         # 创建左侧控制面板
         left_layout = QVBoxLayout()
@@ -954,15 +961,33 @@ class PyNCMGUI(QMainWindow):
         self.create_url_section(left_layout)
         self.create_options_section(left_layout)
         self.create_progress_section(left_layout)
-        main_layout.addLayout(left_layout, 1)  # 设置拉伸因子为1
         
-        # 创建右侧下载列表区域
-        right_layout = QVBoxLayout()
-        self.create_download_list_section(right_layout)
-        main_layout.addLayout(right_layout, 2)  # 设置拉伸因子为2
+        # 创建左侧面板容器
+        left_widget = QWidget()
+        left_widget.setLayout(left_layout)
+        left_widget.setMaximumWidth(400)  # 限制左侧面板宽度
+        top_layout.addWidget(left_widget)
         
-        # 初始化下载管理器
-        self.download_manager = None
+        # 创建中间歌单区域
+        middle_layout = QVBoxLayout()
+        self.create_playlist_section(middle_layout)  # 我们将创建一个新的方法来处理歌单部分
+        
+        # 创建中间面板容器
+        middle_widget = QWidget()
+        middle_widget.setLayout(middle_layout)
+        top_layout.addWidget(middle_widget, 2)  # 设置拉伸因子为2
+        
+        # 将上部布局添加到主布局
+        main_layout.addLayout(top_layout)
+        
+        # 创建下载列表区域
+        download_layout = QVBoxLayout()
+        self.create_download_list_section(download_layout)
+        
+        # 创建下载列表容器
+        download_widget = QWidget()
+        download_widget.setLayout(download_layout)
+        main_layout.addWidget(download_widget)
         
         # 创建菜单栏
         self.create_menu_bar()
@@ -1337,10 +1362,8 @@ class PyNCMGUI(QMainWindow):
         
         # 更新按钮文本 - 不需要在这里更新，因为update_selection_counter已经会处理
 
-    def create_download_list_section(self, parent_layout):
-        # 创建右侧主布局
-        right_layout = QVBoxLayout()
-        
+    def create_playlist_section(self, parent_layout):
+        """创建歌单区域"""
         # 创建歌单区域
         playlist_group = QGroupBox("歌单")
         playlist_layout = QVBoxLayout()
@@ -1349,7 +1372,7 @@ class PyNCMGUI(QMainWindow):
         url_layout = QHBoxLayout()
         self.playlist_url_input = QLineEdit()
         self.playlist_url_input.setPlaceholderText("输入歌单URL，例如：https://music.163.com/#/playlist?id=3559356")
-        self.playlist_url_input.setText("https://music.163.com/#/playlist?id=3559356")  # 设置默认值
+        self.playlist_url_input.setText("@https://music.163.com/#/playlist?id=3559356")  # 设置默认值
         load_btn = QPushButton("加载歌单")
         load_btn.clicked.connect(self.load_playlist)
         url_layout.addWidget(self.playlist_url_input)
@@ -1372,19 +1395,18 @@ class PyNCMGUI(QMainWindow):
         
         # 添加歌单歌曲列表
         self.playlist_table = QTableWidget()
-        self.playlist_table.setColumnCount(5)
-        self.playlist_table.setHorizontalHeaderLabels(["选择", "歌曲", "歌手", "专辑", "ID"])
+        self.playlist_table.setColumnCount(4)  # 减少一列，移除ID列
+        self.playlist_table.setHorizontalHeaderLabels(["选择", "歌曲", "歌手", "专辑"])
         
         # 调整列宽比例
-        self.playlist_table.setColumnWidth(0, 50)
-        self.playlist_table.setColumnWidth(1, 200)
-        self.playlist_table.setColumnWidth(2, 150)
-        self.playlist_table.setColumnWidth(3, 150)
-        self.playlist_table.setColumnWidth(4, 100)
+        self.playlist_table.setColumnWidth(0, 50)   # 选择列
+        self.playlist_table.setColumnWidth(1, 300)  # 歌曲列
+        self.playlist_table.setColumnWidth(2, 200)  # 歌手列
+        self.playlist_table.setColumnWidth(3, 200)  # 专辑列
         
         # 设置表格的其他属性
         self.playlist_table.setAlternatingRowColors(True)
-        self.playlist_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)  # 允许多选
+        self.playlist_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
         self.playlist_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.playlist_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.playlist_table.horizontalHeader().setStretchLastSection(True)
@@ -1458,20 +1480,6 @@ class PyNCMGUI(QMainWindow):
                 border: none;
                 image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 18 18'%3E%3Cpath d='M6.5 12.5l-4-4 1.5-1.5 2.5 2.5 5.5-5.5 1.5 1.5z' fill='white'/%3E%3C/svg%3E");
             }
-            QTableWidget::item:selected:active {
-                background-color: rgba(33, 150, 243, 0.3);
-                color: #ffffff;
-            }
-            QTableWidget::item:selected:!active {
-                background-color: rgba(33, 150, 243, 0.2);
-                color: #ffffff;
-            }
-            QTableWidget::item:hover {
-                background-color: rgba(255, 255, 255, 0.05);
-            }
-            QTableWidget::item:selected:hover {
-                background-color: rgba(33, 150, 243, 0.4);
-            }
         """)
         
         playlist_layout.addWidget(self.playlist_table)
@@ -1522,10 +1530,11 @@ class PyNCMGUI(QMainWindow):
         button_layout.addWidget(download_selected_btn)
         
         playlist_layout.addLayout(button_layout)
-        
         playlist_group.setLayout(playlist_layout)
-        right_layout.addWidget(playlist_group)
-        
+        parent_layout.addWidget(playlist_group)
+
+    def create_download_list_section(self, parent_layout):
+        """创建下载列表区域"""
         # 创建下载列表区域
         list_group = QGroupBox("下载列表")
         list_layout = QVBoxLayout()
@@ -1535,9 +1544,9 @@ class PyNCMGUI(QMainWindow):
         self.download_list.setHorizontalHeaderLabels(["歌曲", "状态", "进度"])
         
         # 调整列宽比例
-        self.download_list.setColumnWidth(0, 400)
-        self.download_list.setColumnWidth(1, 100)
-        self.download_list.setColumnWidth(2, 100)
+        self.download_list.setColumnWidth(0, 400)  # 增加歌曲名列宽
+        self.download_list.setColumnWidth(1, 100)  # 状态列宽
+        self.download_list.setColumnWidth(2, 100)  # 进度列宽
         
         # 设置表格的其他属性
         self.download_list.setAlternatingRowColors(True)
@@ -1545,6 +1554,10 @@ class PyNCMGUI(QMainWindow):
         self.download_list.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.download_list.horizontalHeader().setStretchLastSection(True)
         self.download_list.verticalHeader().setVisible(False)
+        
+        # 设置固定高度
+        self.download_list.setMinimumHeight(150)  # 设置最小高度
+        self.download_list.setMaximumHeight(200)  # 设置最大高度
         
         # 设置默认行高
         self.download_list.verticalHeader().setDefaultSectionSize(25)
@@ -1587,9 +1600,10 @@ class PyNCMGUI(QMainWindow):
         
         list_layout.addWidget(self.download_list)
         list_group.setLayout(list_layout)
-        right_layout.addWidget(list_group)
+        parent_layout.addWidget(list_group)
         
-        parent_layout.addLayout(right_layout)
+        # 初始化下载管理器
+        self.download_manager = None
 
     def handle_cell_click(self, row, column):
         """处理表格单元格点击事件"""
@@ -1747,17 +1761,12 @@ class PyNCMGUI(QMainWindow):
                     album_name = song["al"].get("name", "")
                 self.playlist_table.setItem(row, 3, QTableWidgetItem(album_name))
                 
-                # 存储歌曲ID
+                # 存储歌曲ID为item的data，这样我们仍然可以访问它，但不显示在界面上
                 song_id = str(song.get("id", ""))
-                id_item = QTableWidgetItem(song_id)
-                self.playlist_table.setItem(row, 4, id_item)
-                
-            # 设置表格列宽
-            self.playlist_table.setColumnWidth(0, 50)  # 选择列
-            self.playlist_table.setColumnWidth(1, 200)  # 歌曲列
-            self.playlist_table.setColumnWidth(2, 150)  # 歌手列
-            self.playlist_table.setColumnWidth(3, 150)  # 专辑列
-            self.playlist_table.setColumnWidth(4, 100)  # ID列
+                for col in range(4):
+                    item = self.playlist_table.item(row, col)
+                    if item:
+                        item.setData(Qt.ItemDataRole.UserRole, song_id)
             
             # 初始化选中计数器
             self.update_selection_counter()
@@ -1775,9 +1784,9 @@ class PyNCMGUI(QMainWindow):
         for row in range(self.playlist_table.rowCount()):
             checkbox_item = self.playlist_table.item(row, 0)
             if checkbox_item and checkbox_item.checkState() == Qt.CheckState.Checked:
-                id_item = self.playlist_table.item(row, 4)
-                if id_item and id_item.text():
-                    song_id = id_item.text()
+                # 从任意列的UserRole数据中获取歌曲ID
+                song_id = checkbox_item.data(Qt.ItemDataRole.UserRole)
+                if song_id:
                     song_url = f"https://music.163.com/#/song?id={song_id}"
                     selected_urls.append(song_url)
         if not selected_urls:
